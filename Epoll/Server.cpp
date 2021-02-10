@@ -7,16 +7,21 @@
 #include <netinet/in.h> //sockaddr_in
 #include <arpa/inet.h> //inet_pton()
 #include <string.h> //memset()
-#include <unistd.h> //close()
+#include <unistd.h> //close() alarm()
 #include <signal.h> //signal
 #include "Server.h"
 
 using namespace std;
 
 int Server::s_pipeFd[2];
+int Server::s_epollFd = 0;
 
-Server::Server()
-{
+Server::Server() = default;
+
+Server::~Server() {
+    m_clientsList.clear();
+    // m_users.clear();
+    delete [] m_user;
 }
 
 bool Server::InitServer(const std::string &Ip, const int &Port)
@@ -46,12 +51,12 @@ bool Server::InitServer(const std::string &Ip, const int &Port)
         return false;
     }
 
-    m_epollFd = epoll_create(5);
-    if (m_epollFd == -1) {
+    s_epollFd = epoll_create(5);
+    if (s_epollFd == -1) {
         cout << "Server: create epoll error!" << endl;
         return false;
     }
-    Addfd(m_epollFd, m_socketFd); //注册sock_fd上的事件
+    Addfd(s_epollFd, m_socketFd); //注册sock_fd上的事件
 
     ret = socketpair(PF_UNIX, SOCK_STREAM, 0, s_pipeFd); //使用socketpair创建管道，并注册s_pipeFd[0]上可读写事件
     if (ret == -1) {
@@ -59,15 +64,20 @@ bool Server::InitServer(const std::string &Ip, const int &Port)
         return false;
     }
     SetNonblocking(s_pipeFd[1]);
-    Addfd(m_epollFd, s_pipeFd[0]);
+    Addfd(s_epollFd, s_pipeFd[0]);
 
-    AddSignal(SIGHUP); //控制终端挂起
-    AddSignal(SIGCHLD); //子进程状态发生变化
+    // AddSignal(SIGHUP); //控制终端挂起
+    // AddSignal(SIGCHLD); //子进程状态发生变化
     AddSignal(SIGTERM); //终止进程，即kill
     AddSignal(SIGINT); //键盘输入以中断进程 Ctrl+C
+    AddSignal(SIGALRM); //定时器到期
     m_serverStop = false;
-    cout << "INIT SERVER SUCCESS!" << endl;
+    
+    m_user = new client_data[FD_LIMIT];
+    // user = std::vector<client_data>(FD_LIMIT).data();
+    alarm(TIMESLOT); //开始定时
 
+    cout << "INIT SERVER SUCCESS!" << endl;
     return true;
 }
 
@@ -133,12 +143,32 @@ void Server::HandleSignal(const string &sigMsg) {
             }
             case SIGTERM: {
                 cout << " SIGTERM: Kill" << endl;
+                m_serverStop = true; //安全的终止服务器主循环
             }
             case SIGINT: {
                 cout << " SIGINT: Ctrl+C" << endl;
                 m_serverStop = true; //安全的终止服务器主循环
             }
+            case SIGALRM: {
+                //用timeout来标记有定时任务
+                //先不处理，因为定时任务优先级不高，优先处理其他事件
+                m_timeout = true;
+                break;
+            }
         }
+    }
+}
+
+void Server::TimerHandler() {
+    m_timerList.Tick(); //调用升序定时器链表类的Tick()函数 处理链表上到期的任务
+    alarm(TIMESLOT);  //再次发出 SIGALRM 信号
+}
+
+void Server::TimerCallBack(client_data *user_data) {
+    epoll_ctl(s_epollFd, EPOLL_CTL_DEL, user_data->sockfd, 0);
+    if (user_data) {
+        close(user_data->sockfd);
+        cout << "Server: close socket fd : " << user_data->sockfd << endl;
     }
 }
 
@@ -147,7 +177,7 @@ void Server::Run()
     cout << "START SERVER!" << endl;
     epoll_event events[MAX_EVENT_NUMBER];
     while (!m_serverStop) {
-        int ret = epoll_wait(m_epollFd, events, MAX_EVENT_NUMBER, -1); //epoll_wait
+        int ret = epoll_wait(s_epollFd, events, MAX_EVENT_NUMBER, -1); //epoll_wait
         if (ret < 0 && errno != EINTR) {
             cout << "Server: epoll error" << endl;
             break;
@@ -160,10 +190,22 @@ void Server::Run()
                 socklen_t len = sizeof(client_addr);
 
                 int conn_fd = accept(m_socketFd, (struct sockaddr*)&client_addr, &len);
-                Addfd(m_epollFd, conn_fd); //对 conn_fd 开启ET模式
+                Addfd(s_epollFd, conn_fd); //对 conn_fd 开启ET模式
                 m_clientsList.emplace_back(conn_fd);
-
                 cout << "Server: New connect fd:" << conn_fd << " Now client number:" << m_clientsList.size() << endl;
+
+                m_user[conn_fd].address = client_addr;
+                m_user[conn_fd].sockfd = conn_fd;
+
+                //创建定时器
+                util_timer *timer = new util_timer;
+                timer->userData = &m_user[conn_fd]; //设置用户数据
+                timer->callBackFunc = TimerCallBack; //设置回调函数
+                time_t cur = time(nullptr);    //获取当前时间
+                timer->expire = cur + 3 * TIMESLOT;  //设置客户端活动时间
+                m_user[conn_fd].timer = timer;     //绑定定时器
+                m_timerList.AddTimer(timer);         //将定时器添加到升序链表中
+
             } else if ((sockfd == s_pipeFd[0]) && (events[i].events & EPOLLIN)) { //处理信号
                 char sigBuf[BUFFER_SIZE];
                 ret = recv(s_pipeFd[0], sigBuf, sizeof(sigBuf), 0);
@@ -175,11 +217,18 @@ void Server::Run()
             } else if (events[i].events & EPOLLIN) { //可读事件
                 m_recvStr.clear();
                 for (;;) {
-                    char client_buf[BUFFER_SIZE];
-                    memset(&client_buf, '\0', BUFFER_SIZE);
-                    int recvRet = recv(sockfd, client_buf, BUFFER_SIZE - 1, 0);
+
+                    memset(m_user[sockfd].buf, '\0', BUFFER_SIZE);
+                    int recvRet = recv(sockfd, m_user[sockfd].buf, BUFFER_SIZE - 1, 0);
+                    util_timer *timer = m_user[sockfd].timer;
+		    
+                    // char client_buf[BUFFER_SIZE];
+                    // memset(&client_buf, '\0', BUFFER_SIZE);
+                    // int recvRet = recv(sockfd, client_buf, BUFFER_SIZE - 1, 0);
+                    
                     if (recvRet == 0) { //对端正常关闭socket
-                        close(sockfd);
+                        TimerCallBack(&m_user[sockfd]);
+                        if (timer) m_timerList.DelTimer(timer);
                         m_clientsList.remove(sockfd);
                         cout << "Server: Client close socket!" << endl;
                         cout << "Server: Now client number:" << m_clientsList.size() << endl;
@@ -190,30 +239,38 @@ void Server::Run()
                             break;
                         }
                         if ((errno != EAGAIN) && (errno != EINTR)) { //对端异常断开socket
-                            close(sockfd);
+                            TimerCallBack(&m_user[sockfd]);
+                            if (timer) m_timerList.DelTimer(timer);
                             m_clientsList.remove(sockfd);
                             cout << "Server: Client abnormal close socket!" << endl;
                             cout << "Server: Now client number:" << m_clientsList.size() << endl;
                             break;
                         }
                     } else { //读到一次数据
-                        cout << "Server: Recv data: " << client_buf << endl;
-                        m_recvStr.append(client_buf);
-                    }
+                        if (timer) {
+                            time_t cur = time(nullptr);
+                            timer->expire = cur + 3 * TIMESLOT;
+                            m_timerList.AdjustTimer(timer);
+                        }
+                        m_recvStr.append(m_user[sockfd].buf);
+                        cout << "Server: Recv data: " << m_user[sockfd].buf << endl; 
+		    }
                 }
             } else {
                 cout << "Server: socket something else happened!" << endl;
             }
         }
+
+        if (m_timeout) {
+            TimerHandler();
+            m_timeout = false;
+        }
     }
 
     cout << "CLOSE SERVER!" << endl;
     close(m_socketFd);
-    close(m_epollFd);
+    close(s_epollFd);
     close(s_pipeFd[0]);
     close(s_pipeFd[1]);
 }
-
-
-
 
