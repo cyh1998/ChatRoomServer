@@ -15,11 +15,12 @@ using namespace std;
 
 int Server::s_pipeFd[2];
 int Server::s_epollFd = 0;
+std::list<int> Server::s_clientsList;
 
 Server::Server() = default;
 
 Server::~Server() {
-    m_clientsList.clear();
+    s_clientsList.clear();
     // m_users.clear();
     delete [] m_user;
 }
@@ -100,11 +101,11 @@ void Server::Addfd(int epoll_fd, int sock_fd)
 
 void Server::BroadcastMsg(const int &fd, const string &msg)
 {
-    for (auto &i : m_clientsList) {
+    for (auto &i : s_clientsList) {
         if (i != fd) {
             if (send(i, msg.data(), msg.size(), 0) < 0) {
                 close(fd);
-                m_clientsList.remove(fd);
+                s_clientsList.remove(fd);
                 cout << "Server: send error! Close client: " << i << endl;
             }
         }
@@ -160,7 +161,8 @@ void Server::HandleSignal(const string &sigMsg) {
 }
 
 void Server::TimerHandler() {
-    m_timerList.Tick(); //调用升序定时器链表类的Tick()函数 处理链表上到期的任务
+    // m_timerList.Tick(); //调用升序定时器链表类的Tick()函数 处理链表上到期的任务
+    m_timerWheel.Tick(); //调用时间轮的心搏函数 Tick() 处理链表上到期的任务
     alarm(TIMESLOT);  //再次发出 SIGALRM 信号
 }
 
@@ -168,6 +170,7 @@ void Server::TimerCallBack(client_data *user_data) {
     epoll_ctl(s_epollFd, EPOLL_CTL_DEL, user_data->sockfd, 0);
     if (user_data) {
         close(user_data->sockfd);
+        s_clientsList.remove(user_data->sockfd);
         cout << "Server: close socket fd : " << user_data->sockfd << endl;
     }
 }
@@ -191,20 +194,26 @@ void Server::Run()
 
                 int conn_fd = accept(m_socketFd, (struct sockaddr*)&client_addr, &len);
                 Addfd(s_epollFd, conn_fd); //对 conn_fd 开启ET模式
-                m_clientsList.emplace_back(conn_fd);
-                cout << "Server: New connect fd:" << conn_fd << " Now client number:" << m_clientsList.size() << endl;
+                s_clientsList.emplace_back(conn_fd);
+                cout << "Server: New connect fd:" << conn_fd << " Now client number:" << s_clientsList.size() << endl;
 
                 m_user[conn_fd].address = client_addr;
                 m_user[conn_fd].sockfd = conn_fd;
 
-                //创建定时器
-                util_timer *timer = new util_timer;
-                timer->userData = &m_user[conn_fd]; //设置用户数据
-                timer->callBackFunc = TimerCallBack; //设置回调函数
-                time_t cur = time(nullptr);    //获取当前时间
-                timer->expire = cur + 3 * TIMESLOT;  //设置客户端活动时间
-                m_user[conn_fd].timer = timer;     //绑定定时器
-                m_timerList.AddTimer(timer);         //将定时器添加到升序链表中
+                //创建基于升序链表的定时器
+                // util_timer *timer = new util_timer;
+                // timer->userData = &m_user[conn_fd];  //设置用户数据
+                // timer->callBackFunc = TimerCallBack; //设置回调函数
+                // time_t cur = time(nullptr);    //获取当前时间
+                // timer->expire = cur + 3 * TIMESLOT;  //设置客户端活动时间
+                // m_user[conn_fd].timer = timer;       //绑定定时器
+                // m_timerList.AddTimer(timer);         //将定时器添加到升序链表中
+
+                //创建时间轮定时器
+                tw_timer *timer = m_timerWheel.AddTimer(30);
+                timer->user_data = &m_user[conn_fd];
+                timer->callBackFunc = TimerCallBack;
+                m_user[conn_fd].timer = timer;
 
             } else if ((sockfd == s_pipeFd[0]) && (events[i].events & EPOLLIN)) { //处理信号
                 char sigBuf[BUFFER_SIZE];
@@ -220,18 +229,22 @@ void Server::Run()
 
                     memset(m_user[sockfd].buf, '\0', BUFFER_SIZE);
                     int recvRet = recv(sockfd, m_user[sockfd].buf, BUFFER_SIZE - 1, 0);
-                    util_timer *timer = m_user[sockfd].timer;
-		    
+                    // util_timer *timer = m_user[sockfd].timer;
+                    tw_timer *timer = m_user[sockfd].timer;
+
                     // char client_buf[BUFFER_SIZE];
                     // memset(&client_buf, '\0', BUFFER_SIZE);
                     // int recvRet = recv(sockfd, client_buf, BUFFER_SIZE - 1, 0);
                     
                     if (recvRet == 0) { //对端正常关闭socket
                         TimerCallBack(&m_user[sockfd]);
-                        if (timer) m_timerList.DelTimer(timer);
-                        m_clientsList.remove(sockfd);
+                        if (timer) {
+                            // m_timerList.DelTimer(timer);
+                            m_timerWheel.DelTimer(timer);
+                        }
+                        s_clientsList.remove(sockfd);
                         cout << "Server: Client close socket!" << endl;
-                        cout << "Server: Now client number:" << m_clientsList.size() << endl;
+                        cout << "Server: Now client number:" << s_clientsList.size() << endl;
                         break;
                     } else if (recvRet < 0){
                         if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) { //读完全部数据
@@ -240,18 +253,22 @@ void Server::Run()
                         }
                         if ((errno != EAGAIN) && (errno != EINTR)) { //对端异常断开socket
                             TimerCallBack(&m_user[sockfd]);
-                            if (timer) m_timerList.DelTimer(timer);
-                            m_clientsList.remove(sockfd);
+                            if (timer) {
+                                // m_timerList.DelTimer(timer);
+                                m_timerWheel.DelTimer(timer);
+                            }
+		            s_clientsList.remove(sockfd);
                             cout << "Server: Client abnormal close socket!" << endl;
-                            cout << "Server: Now client number:" << m_clientsList.size() << endl;
+                            cout << "Server: Now client number:" << s_clientsList.size() << endl;
                             break;
                         }
                     } else { //读到一次数据
-                        if (timer) {
-                            time_t cur = time(nullptr);
-                            timer->expire = cur + 3 * TIMESLOT;
-                            m_timerList.AdjustTimer(timer);
-                        }
+                        // if (timer) {
+                        //     time_t cur = time(nullptr);
+                        //     timer->expire = cur + 3 * TIMESLOT;
+                        //     m_timerList.AdjustTimer(timer);
+                        // }
+                        if (timer) timer->rotation++;
                         m_recvStr.append(m_user[sockfd].buf);
                         cout << "Server: Recv data: " << m_user[sockfd].buf << endl; 
 		    }

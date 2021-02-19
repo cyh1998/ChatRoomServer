@@ -8,7 +8,8 @@
 #include <list> //list
 #include <string> //string
 #include <vector> //vector
-#include "../Timer/TimerList.h"
+// #include "../Timer/TimerList.h" //基于升序链表的定时器
+#include "../Timer/TimerWheel.h" //时间轮
 
 #define MAX_EVENT_NUMBER 5000   //Epoll最大事件数
 #define FD_LIMIT         65535  //最大客户端数量
@@ -24,10 +25,11 @@ public:
 private:
     int m_socketFd = 0; //创建的socket文件描述符
     static int s_epollFd; //创建的epoll文件描述符
-    std::list<int> m_clientsList; //已连接的客户端socket列表
+    static std::list<int> s_clientsList; //已连接的客户端socket列表
     std::string m_recvStr; //读取数据缓存区
     static int s_pipeFd[2]; //信号通信管道
-    TimerList m_timerList; //升序定时器链表
+    // TimerList m_timerList; //升序定时器链表
+    TimerWheel m_timerWheel; //时间轮定时器
     client_data* m_user;
     bool m_timeout = false; //定时器任务标记
     bool m_serverStop = true;
