@@ -9,7 +9,8 @@
 #include <string> //string
 #include <vector> //vector
 // #include "../Timer/TimerList.h" //基于升序链表的定时器
-#include "../Timer/TimerWheel.h" //时间轮
+// #include "../Timer/TimerWheel.h" //时间轮
+#include "../Timer/TimerHeap.h" //时间堆
 
 #define MAX_EVENT_NUMBER 5000   //Epoll最大事件数
 #define FD_LIMIT         65535  //最大客户端数量
@@ -29,7 +30,9 @@ private:
     std::string m_recvStr; //读取数据缓存区
     static int s_pipeFd[2]; //信号通信管道
     // TimerList m_timerList; //升序定时器链表
-    TimerWheel m_timerWheel; //时间轮定时器
+    // TimerWheel m_timerWheel; //时间轮定时器
+    TimerHeap m_timerHeap; //时间堆定时器
+    static bool s_isAlarm; //是否在进行定时任务
     client_data* m_user;
     bool m_timeout = false; //定时器任务标记
     bool m_serverStop = true;
