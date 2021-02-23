@@ -3,4 +3,11 @@ project(ChatRoomServer)
 
 set(CMAKE_CXX_STANDARD 14)
 
-add_executable(ChatRoomServer main.cpp Epoll/Server.cpp Epoll/Server.h Timer/TimerList.cpp Timer/TimerList.h Timer/TimerWheel.cpp Timer/TimerWheel.h Timer/TimerHeap.cpp Timer/TimerHeap.h)
+#添加 Epoll Timer 子目录
+add_subdirectory(Epoll)
+add_subdirectory(Timer)
+
+add_executable(ChatRoomServer main.cpp)
+
+#添加链接库
+target_link_libraries(ChatRoomServer Server Timer)
