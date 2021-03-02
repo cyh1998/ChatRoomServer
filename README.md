@@ -1,19 +1,23 @@
 # ChatRoomServer
 基于Epoll实现的聊天室服务器
 
-#### 编 译
+## 编 译
 ```$xslt
 mkdir bulid
 cd bulid
 cmake ..
 make
 ```
-**注：cmake使用的clion自带的3.16版本**
+**注：cmake使用的Clion自带的3.16版本**
 
-#### 运 行
-编译成功后，运行
+## 运 行
+运行服务器
 ```$xslt
 ./ChatRoomServer
+```
+运行多进程服务器(不包含定时器)
+```$xslt
+./MultiProcessServer
 ```
 ---
 此项目基于对《Linux高性能服务器编程》(游双 著)的学习而完成，空闲之余会更据书中的内容进行代码的补充、更新和完善
@@ -27,3 +31,4 @@ make
 6. _2021.02.18_  实现简单时间轮 [Linux 定时器(三) 时间轮](https://www.jianshu.com/p/df55c5a1f8c3)
 7. _2021.02.20_  实现简单时间堆 [Linux 定时器(四) 时间堆](https://www.jianshu.com/p/e880f398530d)
 8. _2021.02.23_  修改CMakeLists为多目录编译 [cmake 深入学习(一)](https://www.jianshu.com/p/41ffb634d30d)
+9. _2021.03.03_  实现基于POXIS共享内存的多进程聊天室服务器 [Linux 多进程编程(二) 共享内存](https://www.jianshu.com/p/e41dff9cbec2)
