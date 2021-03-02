@@ -190,15 +190,16 @@ void Server::TimerCallBack(client_data *user_data) {
 void Server::Run()
 {
     cout << "START SERVER!" << endl;
+    int ret;
     epoll_event events[MAX_EVENT_NUMBER];
     while (!m_serverStop) {
-        int ret = epoll_wait(s_epollFd, events, MAX_EVENT_NUMBER, -1); //epoll_wait
-        if (ret < 0 && errno != EINTR) {
+        int number = epoll_wait(s_epollFd, events, MAX_EVENT_NUMBER, -1); //epoll_wait
+        if (number < 0 && errno != EINTR) {
             cout << "Server: epoll error" << endl;
             break;
         }
 
-        for (int i = 0; i < ret; ++i) {
+        for (int i = 0; i < number; ++i) {
             int sockfd = events[i].data.fd;
             if (sockfd == m_socketFd) { //新的socket连接
                 struct sockaddr_in client_addr;
@@ -289,7 +290,7 @@ void Server::Run()
                             break;
                         }
                     } else { //读到一次数据
-		        // 更新升序链表定时器
+                        // 更新升序链表定时器
                         // if (timer) {
                         //     time_t cur = time(nullptr);
                         //     timer->expire = cur + 3 * TIMESLOT;
