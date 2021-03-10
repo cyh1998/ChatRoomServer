@@ -8,7 +8,7 @@
 #include <netinet/in.h> //sockaddr_in
 #include <arpa/inet.h> //inet_pton()
 #include <string.h> //memset()
-#include <unistd.h> //close() alarm() ftruncate()
+#include <unistd.h> //close() alarm() ftruncate() fork()
 #include <signal.h> //signal
 #include <sys/wait.h> //waitpid()
 #include <sys/mman.h> //shm_open()
@@ -267,7 +267,7 @@ void MultiProcessServer::RunChild(int idx, client_data *users, char *share_mem) 
         cout << "Child Process: create epoll error!" << endl;
         exit(0);
     }
-    cout <<  users[idx].sockfd << endl;
+    
     int sockfd = users[idx].sockfd;
     Addfd(child_epollfd, sockfd);
     int pipefd = users[idx].pipefd[1];
@@ -287,7 +287,6 @@ void MultiProcessServer::RunChild(int idx, client_data *users, char *share_mem) 
             if ((fd == sockfd) && (events[i].events & EPOLLIN)) { //客户端有数据到达
                 memset(share_mem + idx * BUFFER_SIZE, '\0', BUFFER_SIZE);
                 ret = recv(fd, share_mem + idx * BUFFER_SIZE, BUFFER_SIZE - 1, 0);
-                cout << share_mem + idx * BUFFER_SIZE << endl;
                 if (ret < 0) {
                     if (errno != EAGAIN) s_childStop = true; //对端异常断开连接socket
                 } else if (ret == 0) {  //对端正常关闭socket
@@ -303,8 +302,6 @@ void MultiProcessServer::RunChild(int idx, client_data *users, char *share_mem) 
                 } else if (ret == 0) {  //对端正常关闭socket
                     s_childStop = true;
                 } else {
-                    cout << "Child Process: send socket" << sockfd << endl;
-                    cout << share_mem + client * BUFFER_SIZE << endl;
                     send(sockfd, share_mem + client * BUFFER_SIZE, BUFFER_SIZE, 0);
                 }
             } else {
