@@ -9,6 +9,7 @@
 #include <string.h> //memset()
 #include <unistd.h> //close() alarm()
 #include <signal.h> //signal
+#include <pthread.h>
 #include "Server.h"
 
 using namespace std;
@@ -73,8 +74,20 @@ bool Server::InitServer(const std::string &Ip, const int &Port)
     AddSignal(SIGTERM); //终止进程，即kill
     AddSignal(SIGINT); //键盘输入以中断进程 Ctrl+C
     AddSignal(SIGALRM); //定时器到期
-    m_serverStop = false;
     
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGQUIT);
+    sigaddset(&set, SIGUSR1);
+    ret = pthread_sigmask(SIG_BLOCK, &set, nullptr);
+    if (ret != 0) {
+        cout << "Server: pthread_sigmask error!" << endl;
+        return false;
+    }
+    m_sigThread.setSignalSet(&set); //设置信号集
+    m_sigThread.start(); //开启信号处理线程
+
+    m_serverStop = false;
     m_user = new client_data[FD_LIMIT];
     // user = std::vector<client_data>(FD_LIMIT).data();
     // alarm(TIMESLOT); //开始定时
