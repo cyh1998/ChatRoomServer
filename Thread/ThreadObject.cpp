@@ -5,10 +5,11 @@
 #include <iostream>
 #include "ThreadObject.h"
 
-ThreadObject::ThreadObject() :
+ThreadObject::ThreadObject(ThreadFunc func) :
     m_pthreadId(0),
     m_isStarted(false),
-    m_isJoined(false)
+    m_isJoined(false),
+    m_func(std::move(func))
 {
 
 }
@@ -21,7 +22,7 @@ ThreadObject::~ThreadObject() {
 
 void ThreadObject::start() {
     m_isStarted = true;
-    if (pthread_create(&m_pthreadId, nullptr, entryFunc, static_cast<void*>(this))) {
+    if (pthread_create(&m_pthreadId, nullptr, run, static_cast<void*>(this))) {
         m_isStarted = false;
         std::cout << "ThreadObject: Create a new thread failed!" << std::endl;
     }
@@ -40,8 +41,9 @@ void ThreadObject::cancel() {
     }
 }
 
-void* ThreadObject::entryFunc(void *obj) {
+void* ThreadObject::run(void *obj) {
     ThreadObject* ptr = static_cast<ThreadObject*>(obj);
-    ptr->run();
+    ptr->m_func();
+    delete ptr;
     return nullptr;
 }

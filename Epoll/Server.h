@@ -11,7 +11,6 @@
 // #include "../Timer/TimerList.h" //基于升序链表的定时器
 // #include "../Timer/TimerWheel.h" //时间轮
 #include "../Timer/TimerHeap.h" //时间堆
-#include "../Thread/SignalThread.h" //信号处理线程
 
 #define MAX_EVENT_NUMBER 5000   //Epoll最大事件数
 #define FD_LIMIT         65535  //最大客户端数量
@@ -37,7 +36,6 @@ private:
     client_data* m_user;
     bool m_timeout = false; //定时器任务标记
     bool m_serverStop = true;
-    SignalThread m_sigThread; //信号线程
 
 private:
     int SetNonblocking(int fd); //将文件描述符设置为非堵塞的
@@ -46,6 +44,7 @@ private:
     static void SignalHandler(int sig); //信号处理回调函数
     void AddSignal(int sig); //设置信号处理回调函数
     void HandleSignal(const std::string &sigMsg); //自定义信号处理函数
+    static void SignalThreadFunc(sigset_t *set); //自定义信号线程处理函数
     void TimerHandler(); //SIGALRM信号处理函数
     static void TimerCallBack(client_data *user_data); //定时器回调函数
 };

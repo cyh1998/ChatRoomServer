@@ -11,6 +11,7 @@
 #include <signal.h> //signal
 #include <pthread.h>
 #include "Server.h"
+#include "../Thread/ThreadObject.h"
 
 using namespace std;
 
@@ -84,8 +85,8 @@ bool Server::InitServer(const std::string &Ip, const int &Port)
         cout << "Server: pthread_sigmask error!" << endl;
         return false;
     }
-    m_sigThread.setSignalSet(&set); //设置信号集
-    m_sigThread.start(); //开启信号处理线程
+    ThreadObject sigThread([_set = &set] { Server::SignalThreadFunc(_set); });
+    sigThread.start();
 
     m_serverStop = false;
     m_user = new client_data[FD_LIMIT];
@@ -133,6 +134,16 @@ void Server::SignalHandler(int sig)
     int msg = sig;
     send(s_pipeFd[1], reinterpret_cast<char *>(&msg), 1 , 0); //将信号写入管道，通知主循环
     errno = old_errno;
+}
+
+void Server::SignalThreadFunc(sigset_t *set) {
+    int ret, sig;
+    for (;;) {
+        ret = sigwait(set, &sig);
+        if (ret == 0) {
+            std::cout << "SignalThread: Get signal: " << sig << std::endl;
+        }
+    }
 }
 
 void Server::AddSignal(int sig)
